@@ -17,23 +17,32 @@
 package com.cyanogenmod.settings.device;
 
 import android.app.ActionBar;
+import android.content.Context;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Message;
 import android.preference.Preference;
-import android.preference.Preference.OnPreferenceChangeListener;
 import android.preference.PreferenceActivity;
 import android.preference.PreferenceCategory;
 import android.preference.SwitchPreference;
-import android.view.Menu;
+import android.provider.Settings;
 import android.view.MenuItem;
+import android.view.ViewGroup;
 
 import cyanogenmod.providers.CMSettings;
 
-import org.cyanogenmod.internal.util.ScreenType;
+public class TouchscreenGestureSettings extends PreferenceActivity {
 
-public class TouchscreenGestureSettings extends PreferenceActivity implements OnPreferenceChangeListener {
-
+    private static final String CATEGORY_AMBIENT_DISPLAY = "ambient_display_key";
+    private static final String KEY_GESTURE_HAND_WAVE = "gesture_hand_wave";
     private static final String KEY_HAPTIC_FEEDBACK = "touchscreen_gesture_haptic_feedback";
+    private static final String KEY_PROXIMITY_WAKE = "proximity_wake_enable";
 
+    private Handler mGestureHandler = new Handler();
+
+    private SwitchPreference mAmbientDisplayPreference;
+    private SwitchPreference mHandwavePreference;
+    private SwitchPreference mProximityWakePreference;
     private SwitchPreference mHapticFeedback;
 
     @Override
@@ -41,37 +50,34 @@ public class TouchscreenGestureSettings extends PreferenceActivity implements On
         super.onCreate(savedInstanceState);
         addPreferencesFromResource(R.xml.touchscreen_panel);
 
+        // Ambient Display
+        PreferenceCategory ambientDisplay =
+            (PreferenceCategory) findPreference(CATEGORY_AMBIENT_DISPLAY);
+        ambientDisplay.setEnabled(isDozeEnabled());
+        mHandwavePreference = (SwitchPreference) findPreference(KEY_GESTURE_HAND_WAVE);
+        mHandwavePreference.setOnPreferenceChangeListener(mProxPrefListener);
+        mProximityWakePreference = (SwitchPreference) findPreference(KEY_PROXIMITY_WAKE);
+        mProximityWakePreference.setOnPreferenceChangeListener(mProxPrefListener);
         mHapticFeedback = (SwitchPreference) findPreference(KEY_HAPTIC_FEEDBACK);
-        mHapticFeedback.setOnPreferenceChangeListener(this);
+        mHapticFeedback.setOnPreferenceChangeListener(mHapticPrefListener);
+
+        // Gestures
+        for (String gestureKey : CMActionsSettings.ALL_GESTURE_KEYS) {
+            Preference pref = findPreference(gestureKey);
+            pref.setOnPreferenceChangeListener(mGesturePrefListener);
+        }
 
         final ActionBar actionBar = getActionBar();
         actionBar.setDisplayHomeAsUpEnabled(true);
-    }
 
-    @Override
-    public boolean onPreferenceChange(Preference preference, Object newValue) {
-        final String key = preference.getKey();
-        if (KEY_HAPTIC_FEEDBACK.equals(key)) {
-            final boolean value = (Boolean) newValue;
-            CMSettings.System.putInt(getContentResolver(),
-                    CMSettings.System.TOUCHSCREEN_GESTURE_HAPTIC_FEEDBACK, value ? 1 : 0);
-            return true;
-        }
-
-        return false;
+        ((ViewGroup)getListView().getParent()).setPadding(0, 0, 0, 0);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-
         mHapticFeedback.setChecked(CMSettings.System.getInt(getContentResolver(),
                 CMSettings.System.TOUCHSCREEN_GESTURE_HAPTIC_FEEDBACK, 1) != 0);
-
-        // If running on a phone, remove padding around the listview
-        if (!ScreenType.isTablet(this)) {
-            getListView().setPadding(0, 0, 0, 0);
-        }
     }
 
     @Override
@@ -82,4 +88,52 @@ public class TouchscreenGestureSettings extends PreferenceActivity implements On
         }
         return false;
     }
+
+    private boolean isDozeEnabled() {
+        return Settings.Secure.getInt(getContentResolver(),
+                Settings.Secure.DOZE_ENABLED, 1) != 0;
+    }
+
+    private Preference.OnPreferenceChangeListener mProxPrefListener =
+        new Preference.OnPreferenceChangeListener() {
+        @Override
+        public boolean onPreferenceChange(Preference preference, Object newValue) {
+            if ((boolean) newValue) {
+                final String key = preference.getKey();
+                if (KEY_GESTURE_HAND_WAVE.equals(key)) {
+                    mProximityWakePreference.setChecked(false);
+                } else if (KEY_PROXIMITY_WAKE.equals(key)) {
+                    mHandwavePreference.setChecked(false);
+                }
+            }
+            return true;
+        }
+    };
+
+    private Preference.OnPreferenceChangeListener mHapticPrefListener =
+        new Preference.OnPreferenceChangeListener() {
+        @Override
+        public boolean onPreferenceChange(Preference preference, Object newValue) {
+            final boolean value = (Boolean) newValue;
+            CMSettings.System.putInt(getContentResolver(),
+                    CMSettings.System.TOUCHSCREEN_GESTURE_HAPTIC_FEEDBACK, value ? 1 : 0);
+            return true;
+        }
+    };
+
+    private Preference.OnPreferenceChangeListener mGesturePrefListener =
+        new Preference.OnPreferenceChangeListener() {
+            @Override
+            public boolean onPreferenceChange(Preference preference, Object newValue) {
+                mGestureHandler.postDelayed(mUpdateGestures, 500);
+                return true;
+            }
+        };
+
+    private final Runnable mUpdateGestures = new Runnable() {
+        @Override
+        public void run() {
+            CMActionsSettings.updateGestureMode(TouchscreenGestureSettings.this);
+        }
+    };
 }
